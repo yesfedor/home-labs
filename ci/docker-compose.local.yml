@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  # Expose ports directly for local debugging if needed
+  # (NPM handles this in prod, but locally we might want direct access)
+  mariadb:
+    ports:
+      - "3306:3306"
+
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"

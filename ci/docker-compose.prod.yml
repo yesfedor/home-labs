@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  # Resource Limits for Heavy Services
+  gitlab:
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+
+  docmost:
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+
+  nextcloud:
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  mariadb:
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  postgres:
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  redis:
+    deploy:
+      resources:
+        limits:
+          memory: 256M

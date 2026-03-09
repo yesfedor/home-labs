@@ -1,0 +1,397 @@
+version: '3.8'
+
+networks:
+  homelab:
+    name: homelab
+    driver: bridge
+
+services:
+  # ---------------------------------------------------------------------------
+  # Core Infrastructure (Proxy, VPN, Management)
+  # ---------------------------------------------------------------------------
+
+  # Nginx Proxy Manager - Gateway for all HTTP/HTTPS traffic
+  npm:
+    image: 'jc21/nginx-proxy-manager:latest'
+    container_name: infra-npm
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '81:81'
+      - '443:443'
+    volumes:
+      - ./volumes/npm-data:/data
+      - ./volumes/npm-letsencrypt:/etc/letsencrypt
+    environment:
+      DB_MYSQL_HOST: "mariadb"
+      DB_MYSQL_PORT: 3306
+      DB_MYSQL_USER: "${NPM_DB_USER}"
+      DB_MYSQL_PASSWORD: "${NPM_DB_PASSWORD}"
+      DB_MYSQL_NAME: "${NPM_DB_NAME}"
+    depends_on:
+      - mariadb
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # WireGuard - VPN Access (Client/Server)
+  wireguard:
+    image: linuxserver/wireguard:latest
+    container_name: infra-wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - SERVERURL=${WG_HOST}
+      - SERVERPORT=51820
+      - PEERS=1
+      - PEERDNS=auto
+      - INTERNAL_SUBNET=10.13.13.0
+      - ALLOWEDIPS=0.0.0.0/0
+    volumes:
+      - ./volumes/wireguard:/config
+      - /lib/modules:/lib/modules
+    ports:
+      - 51820:51820/udp
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    restart: unless-stopped
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # Portainer - Container Management
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: infra-portainer
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./volumes/portainer:/data
+    ports:
+      - "9000:9000"
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  portainer-agent:
+    image: portainer/agent:latest
+    container_name: infra-portainer-agent
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # Teleport - Secure Access Plane
+  teleport:
+    image: teleport/teleport:latest
+    container_name: infra-teleport
+    restart: unless-stopped
+    volumes:
+      - ./volumes/teleport/config:/etc/teleport
+      - ./volumes/teleport/data:/var/lib/teleport
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # Beszel - Lightweight Monitoring Hub
+  beszel:
+    image: 'henrygd/beszel:latest'
+    container_name: infra-beszel
+    restart: unless-stopped
+    ports:
+      - '8090:8090'
+    volumes:
+      - ./volumes/beszel:/data
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # Beszel Agent - Monitoring Agent for this host
+  beszel-agent:
+    image: 'henrygd/beszel-agent:latest'
+    container_name: infra-beszel-agent
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      PORT: 45876
+      KEY: "${BESZEL_AGENT_KEY}"
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # ---------------------------------------------------------------------------
+  # Databases & Caching
+  # ---------------------------------------------------------------------------
+
+  # MariaDB - Shared for NPM and Nextcloud
+  mariadb:
+    image: mariadb:10.6
+    container_name: infra-mariadb
+    restart: unless-stopped
+    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW --innodb-read-only-compressed=OFF
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE}"
+      MYSQL_USER: "${MYSQL_USER}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD}"
+    volumes:
+      - ./volumes/mariadb:/var/lib/mysql
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # Postgres - Shared for Docmost and others
+  postgres:
+    image: postgres:16-alpine
+    container_name: infra-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB}"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+    volumes:
+      - ./volumes/postgres:/var/lib/postgresql/data
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # Redis - Shared Cache
+  redis:
+    image: redis:7-alpine
+    container_name: infra-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - ./volumes/redis:/data
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # ---------------------------------------------------------------------------
+  # Database Management UIs
+  # ---------------------------------------------------------------------------
+
+  # phpMyAdmin
+  pma:
+    image: phpmyadmin/phpmyadmin
+    container_name: infra-pma
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mariadb
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 100M
+    ports:
+      - "8081:80"
+    depends_on:
+      - mariadb
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # pgAdmin4
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: infra-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: "${PGADMIN_DEFAULT_EMAIL}"
+      PGADMIN_DEFAULT_PASSWORD: "${PGADMIN_DEFAULT_PASSWORD}"
+    volumes:
+      - ./volumes/pgadmin:/var/lib/pgadmin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # RedisInsight
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: infra-redisinsight
+    restart: unless-stopped
+    ports:
+      - "5540:5540"
+    depends_on:
+      - redis
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # ---------------------------------------------------------------------------
+  # Applications
+  # ---------------------------------------------------------------------------
+
+  # Docmost
+  docmost:
+    image: docmost/docmost:latest
+    container_name: infra-docmost
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      APP_URL: "${DOCMOST_APP_URL}"
+      APP_SECRET: "${DOCMOST_APP_SECRET}"
+      DATABASE_URL: "${DOCMOST_DB_URL}"
+      REDIS_URL: "${DOCMOST_REDIS_URL}"
+    volumes:
+      - ./volumes/docmost:/app/data/storage
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # MinIO
+  minio:
+    image: minio/minio:latest
+    container_name: infra-minio
+    restart: unless-stopped
+    command: server /data --console-address "${MINIO_CONSOLE_ADDRESS}"
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD}"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./volumes/minio/data:/data
+      - ./volumes/minio/config:/root/.minio
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # Nextcloud
+  nextcloud:
+    image: nextcloud:latest
+    container_name: infra-nextcloud
+    restart: unless-stopped
+    depends_on:
+      - mariadb
+      - redis
+    environment:
+      - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_TRUSTED_DOMAINS}
+      - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD}
+      - MYSQL_DATABASE=${NEXTCLOUD_DB_NAME}
+      - MYSQL_USER=${NEXTCLOUD_DB_USER}
+      - MYSQL_HOST=mariadb
+      - REDIS_HOST=redis
+      - REDIS_HOST_PASSWORD=${REDIS_PASSWORD}
+    volumes:
+      - ./volumes/nextcloud/html:/var/www/html
+      - ./volumes/nextcloud/apps:/var/www/html/custom_apps
+      - ./volumes/nextcloud/config:/var/www/html/config
+      - ./volumes/nextcloud/data:/var/www/html/data
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # GitLab CE
+  gitlab:
+    image: gitlab/gitlab-ce:18.9.1-ce.0
+    container_name: infra-gitlab
+    restart: always
+    hostname: "${GITLAB_HOSTNAME}"
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url '${GITLAB_URL}'
+        gitlab_rails['initial_root_password'] = '${GITLAB_ROOT_PASSWORD}'
+
+        # --- SMTP Configuration ---
+        gitlab_rails['smtp_enable'] = true
+        gitlab_rails['smtp_address'] = "${GITLAB_SMTP_ADDRESS}"
+        gitlab_rails['smtp_port'] = ${GITLAB_SMTP_PORT}
+        gitlab_rails['smtp_user_name'] = "${GITLAB_SMTP_USER}"
+        gitlab_rails['smtp_password'] = "${GITLAB_SMTP_PASSWORD}"
+        gitlab_rails['smtp_domain'] = "${GITLAB_SMTP_DOMAIN}"
+        gitlab_rails['smtp_authentication'] = "login"
+        gitlab_rails['smtp_enable_starttls_auto'] = false
+        gitlab_rails['smtp_tls'] = true
+        gitlab_rails['gitlab_email_from'] = '${GITLAB_EMAIL_FROM}'
+        gitlab_rails['gitlab_email_reply_to'] = '${GITLAB_EMAIL_REPLY_TO}'
+
+        # --- Registry Configuration ---
+        registry_external_url 'http://${GITLAB_REGISTRY_HOSTNAME}'
+        registry['enable'] = true
+        registry['registry_http_addr'] = "0.0.0.0:5000"
+        registry['registry_https_addr'] = nil
+        registry['tls_key_path'] = nil
+        registry['tls_certificate_path'] = nil
+        registry['env'] = {
+          "REGISTRY_HTTP_RELATIVEURLS" => true
+        }
+
+        # --- SSH & Nginx ---
+        gitlab_rails['gitlab_shell_ssh_port'] = 8192
+        gitlab_sshd['enable'] = false
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+
+        # --- Performance Tuning ---
+        puma['worker_processes'] = 1
+        sidekiq['concurrency'] = 5
+
+        # --- Monitoring (Disabled to save resources) ---
+        prometheus_monitoring['enable'] = false
+        node_exporter['enable'] = false
+        postgres_exporter['enable'] = false
+        redis_exporter['enable'] = false
+
+        # --- Logging ---
+        gitlab_rails['env'] = { "GITLAB_LOG_LEVEL" => "WARN" }
+        logging['logrotate_size'] = '25M'
+    ports:
+      - "8190:80"
+      - "8192:22"
+      - "5000:5000"
+    volumes:
+      - ./volumes/gitlab/config:/etc/gitlab
+      - ./volumes/gitlab/logs:/var/log/gitlab
+      - ./volumes/gitlab/data:/var/opt/gitlab
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env
+
+  # GitLab Runner
+  gitlab-runner:
+    image: gitlab/gitlab-runner:alpine
+    container_name: infra-gitlab-runner
+    restart: always
+    volumes:
+      - ./volumes/gitlab-runner/config:/etc/gitlab-runner
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - homelab
+    env_file:
+      - ../configs/${ENV_TYPE:-prod}.env

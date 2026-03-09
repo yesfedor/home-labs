@@ -1,0 +1,8 @@
+version: '3.8'
+
+services:
+  # Additional monitoring for test environment
+  beszel:
+    image: 'henrygd/beszel:latest'
+    volumes:
+      - ./volumes/beszel:/path/to/data
