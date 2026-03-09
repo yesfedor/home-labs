@@ -20,8 +20,8 @@ services:
       - '81:81'
       - '443:443'
     volumes:
-      - ./volumes/npm-data:/data
-      - ./volumes/npm-letsencrypt:/etc/letsencrypt
+      - ./ci/volumes/npm-data:/data
+      - ./ci/volumes/npm-letsencrypt:/etc/letsencrypt
     environment:
       DB_MYSQL_HOST: "mariadb"
       DB_MYSQL_PORT: 3306
@@ -29,7 +29,8 @@ services:
       DB_MYSQL_PASSWORD: "${NPM_DB_PASSWORD}"
       DB_MYSQL_NAME: "${NPM_DB_NAME}"
     depends_on:
-      - mariadb
+      mariadb:
+        condition: service_healthy
     networks:
       - homelab
     env_file:
@@ -53,7 +54,7 @@ services:
       - INTERNAL_SUBNET=10.13.13.0
       - ALLOWEDIPS=0.0.0.0/0
     volumes:
-      - ./volumes/wireguard:/config
+      - ./ci/volumes/wireguard:/config
       - /lib/modules:/lib/modules
     ports:
       - 51820:51820/udp
@@ -74,9 +75,8 @@ services:
       - no-new-privileges:true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./volumes/portainer:/data
-    ports:
-      - "9000:9000"
+      - ./ci/volumes/portainer:/data
+    # Ports removed for internal access via NPM
     networks:
       - homelab
     env_file:
@@ -100,8 +100,8 @@ services:
     container_name: infra-teleport
     restart: unless-stopped
     volumes:
-      - ./volumes/teleport/config:/etc/teleport
-      - ./volumes/teleport/data:/var/lib/teleport
+      - ./ci/volumes/teleport/config:/etc/teleport
+      - ./ci/volumes/teleport/data:/var/lib/teleport
     networks:
       - homelab
     env_file:
@@ -112,10 +112,9 @@ services:
     image: 'henrygd/beszel:latest'
     container_name: infra-beszel
     restart: unless-stopped
-    ports:
-      - '8090:8090'
+    # Ports removed for internal access via NPM
     volumes:
-      - ./volumes/beszel:/data
+      - ./ci/volumes/beszel:/data
     networks:
       - homelab
     env_file:
@@ -151,11 +150,16 @@ services:
       MYSQL_USER: "${MYSQL_USER}"
       MYSQL_PASSWORD: "${MYSQL_PASSWORD}"
     volumes:
-      - ./volumes/mariadb:/var/lib/mysql
+      - ./ci/volumes/mariadb:/var/lib/mysql
     networks:
       - homelab
     env_file:
       - ../configs/${ENV_TYPE:-prod}.env
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   # Postgres - Shared for Docmost and others
   postgres:
@@ -167,11 +171,16 @@ services:
       POSTGRES_USER: "${POSTGRES_USER}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
     volumes:
-      - ./volumes/postgres:/var/lib/postgresql/data
+      - ./ci/volumes/postgres:/var/lib/postgresql/data
     networks:
       - homelab
     env_file:
       - ../configs/${ENV_TYPE:-prod}.env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # Redis - Shared Cache
   redis:
@@ -180,11 +189,16 @@ services:
     restart: unless-stopped
     command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
-      - ./volumes/redis:/data
+      - ./ci/volumes/redis:/data
     networks:
       - homelab
     env_file:
       - ../configs/${ENV_TYPE:-prod}.env
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   # ---------------------------------------------------------------------------
   # Database Management UIs
@@ -199,10 +213,10 @@ services:
       PMA_HOST: mariadb
       PMA_PORT: 3306
       UPLOAD_LIMIT: 100M
-    ports:
-      - "8081:80"
+    # Ports removed for internal access via NPM
     depends_on:
-      - mariadb
+      mariadb:
+        condition: service_healthy
     networks:
       - homelab
     env_file:
@@ -217,11 +231,11 @@ services:
       PGADMIN_DEFAULT_EMAIL: "${PGADMIN_DEFAULT_EMAIL}"
       PGADMIN_DEFAULT_PASSWORD: "${PGADMIN_DEFAULT_PASSWORD}"
     volumes:
-      - ./volumes/pgadmin:/var/lib/pgadmin
-    ports:
-      - "5050:80"
+      - ./ci/volumes/pgadmin:/var/lib/pgadmin
+    # Ports removed for internal access via NPM
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     networks:
       - homelab
     env_file:
@@ -232,10 +246,10 @@ services:
     image: redis/redisinsight:latest
     container_name: infra-redisinsight
     restart: unless-stopped
-    ports:
-      - "5540:5540"
+    # Ports removed for internal access via NPM
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     networks:
       - homelab
     env_file:
@@ -251,15 +265,17 @@ services:
     container_name: infra-docmost
     restart: unless-stopped
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       APP_URL: "${DOCMOST_APP_URL}"
       APP_SECRET: "${DOCMOST_APP_SECRET}"
       DATABASE_URL: "${DOCMOST_DB_URL}"
       REDIS_URL: "${DOCMOST_REDIS_URL}"
     volumes:
-      - ./volumes/docmost:/app/data/storage
+      - ./ci/volumes/docmost:/app/data/storage
     networks:
       - homelab
     env_file:
@@ -278,8 +294,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - ./volumes/minio/data:/data
-      - ./volumes/minio/config:/root/.minio
+      - ./ci/volumes/minio/data:/data
+      - ./ci/volumes/minio/config:/root/.minio
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
@@ -292,12 +308,14 @@ services:
 
   # Nextcloud
   nextcloud:
-    image: nextcloud:latest
+    image: nextcloud:30
     container_name: infra-nextcloud
     restart: unless-stopped
     depends_on:
-      - mariadb
-      - redis
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_TRUSTED_DOMAINS}
       - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD}
@@ -307,10 +325,10 @@ services:
       - REDIS_HOST=redis
       - REDIS_HOST_PASSWORD=${REDIS_PASSWORD}
     volumes:
-      - ./volumes/nextcloud/html:/var/www/html
-      - ./volumes/nextcloud/apps:/var/www/html/custom_apps
-      - ./volumes/nextcloud/config:/var/www/html/config
-      - ./volumes/nextcloud/data:/var/www/html/data
+      - ./ci/volumes/nextcloud/html:/var/www/html
+      - ./ci/volumes/nextcloud/apps:/var/www/html/custom_apps
+      - ./ci/volumes/nextcloud/config:/var/www/html/config
+      - ./ci/volumes/nextcloud/data:/var/www/html/data
     networks:
       - homelab
     env_file:
@@ -375,9 +393,9 @@ services:
       - "8192:22"
       - "5000:5000"
     volumes:
-      - ./volumes/gitlab/config:/etc/gitlab
-      - ./volumes/gitlab/logs:/var/log/gitlab
-      - ./volumes/gitlab/data:/var/opt/gitlab
+      - ./ci/volumes/gitlab/config:/etc/gitlab
+      - ./ci/volumes/gitlab/logs:/var/log/gitlab
+      - ./ci/volumes/gitlab/data:/var/opt/gitlab
     networks:
       - homelab
     env_file:
@@ -389,7 +407,7 @@ services:
     container_name: infra-gitlab-runner
     restart: always
     volumes:
-      - ./volumes/gitlab-runner/config:/etc/gitlab-runner
+      - ./ci/volumes/gitlab-runner/config:/etc/gitlab-runner
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - homelab

@@ -1,4 +1,4 @@
-# Determine the repository root directory (one level up from this Makefile if it's in root, 
+# Determine the repository root directory (one level up from this Makefile if it's in root,
 # or just current dir if we assume make is run from root)
 # A robust way to get the directory where the Makefile resides:
 REPO_ROOT := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -9,7 +9,7 @@ COMPOSE_FILE_OVERRIDE := $(REPO_ROOT)/ci/docker-compose.$(ENV_TYPE).yml
 ENV_FILE := $(REPO_ROOT)/configs/$(ENV_TYPE).env
 
 # Docker Compose command with files and env
-DC := docker-compose -f $(COMPOSE_FILE_BASE) -f $(COMPOSE_FILE_OVERRIDE) --env-file $(ENV_FILE)
+DC := docker compose -f $(COMPOSE_FILE_BASE) -f $(COMPOSE_FILE_OVERRIDE) --env-file $(ENV_FILE)
 
 .PHONY: help up down logs pull restart clean-volumes ps setup-host-ssh
 

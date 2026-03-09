@@ -32,7 +32,7 @@ This guide describes how to deploy the Home-Lab infrastructure locally for devel
    ```
    *Or using docker-compose directly:*
    ```bash
-   docker-compose -f ci/docker-compose.yml -f ci/docker-compose.local.yml --env-file configs/local.env up -d
+   docker compose -f ci/docker-compose.yml -f ci/docker-compose.local.yml --env-file configs/local.env up -d
    ```
 
 4. **Verify Deployment:**
@@ -89,5 +89,5 @@ make clean-volumes ENV_TYPE=local
 - **Port Conflicts:** Ensure ports 80, 443, 3000, 5432, 3306, 6379, 8080, 8090, 9000 are free on your host.
 - **Logs:** View logs for a specific service:
   ```bash
-  docker-compose -f ci/docker-compose.yml -f ci/docker-compose.local.yml --env-file configs/local.env logs -f <service_name>
+  docker compose -f ci/docker-compose.yml -f ci/docker-compose.local.yml --env-file configs/local.env logs -f <service_name>
   ```

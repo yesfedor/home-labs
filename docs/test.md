@@ -33,7 +33,7 @@ The testing environment mirrors production configurations but may use different 
 
 ```bash
 # Example: Run integration tests
-docker-compose -f ci/docker-compose.test.yml run --rm test-runner npm test
+docker compose -f ci/docker-compose.test.yml run --rm test-runner npm test
 ```
 
 ## Cleanup
